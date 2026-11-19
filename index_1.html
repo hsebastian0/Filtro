@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>Fisch · Filtro facial</title>
+    <link rel="stylesheet" href="css/app.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DynaPuff:wght@400..700&family=Nunito:wght@400;600;700;800&display=swap" rel="stylesheet">
+
+    <!-- Los modulos de three.js (exportadores, etc.) importan "three" -->
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://cdn.jsdelivr.net/npm/three@0.181.1/build/three.module.js",
+            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.181.1/examples/jsm/"
+        }
+    }
+    </script>
+
+    <style>
+        /* ===== FISCH: pantalla principal del filtro (marca de la web) ===== */
+        :root {
+            --fisch-purple: #3a1466;
+            --fisch-lime: #d4f53c;
+            --fisch-pink: #ff2ad4;
+            --fisch-cream: #f6f1fd;
+        }
+
+        #home {
+            position: fixed; inset: 0; z-index: 10;
+            display: flex; align-items: center; justify-content: center;
+            box-sizing: border-box; min-height: 100vh; min-height: 100dvh;
+            padding: calc(24px + env(safe-area-inset-top, 0px)) 20px calc(24px + env(safe-area-inset-bottom, 0px));
+            text-align: center; color: var(--fisch-cream);
+            font-family: "Nunito", system-ui, sans-serif;
+            background-color: var(--fisch-purple);
+            background-image:
+                radial-gradient(circle at 12% 8%, rgba(255, 42, 212, .28), transparent 50%),
+                radial-gradient(circle at 92% 96%, rgba(212, 245, 60, .14), transparent 45%);
+            transition: opacity .4s ease;
+        }
+        #home.hidden { opacity: 0; pointer-events: none; }
+
+        .home-inner { width: 100%; max-width: 360px; display: flex; flex-direction: column; align-items: center; }
+
+        .home-brand {
+            font-family: "DynaPuff", cursive; font-weight: 700;
+            font-size: clamp(44px, 14vw, 68px); line-height: 1; margin: 0 0 16px;
+        }
+        .home-brand span { color: var(--fisch-lime); }
+
+        .home-title {
+            font-family: "DynaPuff", cursive; font-weight: 700; margin: 0 0 14px;
+            font-size: clamp(36px, 11vw, 56px); line-height: 1.04;
+        }
+        .home-title span { color: var(--fisch-lime); }
+
+        .home-sub {
+            font-size: clamp(15px, 4.2vw, 18px); line-height: 1.45; margin: 0 0 28px; opacity: .92;
+        }
+
+        #start-filter {
+            font-family: "Nunito", system-ui, sans-serif; font-weight: 800; font-size: 17px;
+            min-width: 220px; max-width: 86vw; padding: 14px 36px;
+            color: #fff; background-color: var(--fisch-pink);
+            border: 0; border-radius: 999px; cursor: pointer;
+            box-shadow: 0 6px 18px rgba(255, 42, 212, .35);
+            transition: transform .1s, background-color .15s;
+        }
+        #start-filter:active { background-color: #d91fb4; transform: translateY(2px); }
+        #start-filter:disabled { opacity: .7; cursor: default; }
+
+        .home-note { font-size: 13px; line-height: 1.4; opacity: .8; margin: 18px 0 0; min-height: 1.4em; }
+        .home-note.error { color: var(--fisch-lime); opacity: 1; }
+
+        @media (max-height: 640px) {
+            .home-brand { font-size: 40px; margin-bottom: 10px; }
+            .home-title { font-size: clamp(30px, 9vw, 40px); margin-bottom: 8px; }
+            .home-sub { margin-bottom: 18px; }
+        }
+    </style>
+</head>
+
+<body>
+
+    <!-- Pantalla principal: el filtro arranca al pulsar el boton (la camara requiere gesto del usuario) -->
+    <section id="home">
+        <div class="home-inner">
+            <div class="home-brand">f<span>!</span>sch</div>
+            <h1 class="home-title">Conviértete en <span>Fisch.</span></h1>
+            <p class="home-sub">Un pez que reacciona a tu cara: abre la boca, sonríe o levanta las cejas y mira qué pasa.</p>
+            <button id="start-filter">Probar el filtro</button>
+            <p id="home-note" class="home-note" role="status">Necesitas permitir el acceso a la cámara.</p>
+        </div>
+    </section>
+
+    <div id="app">
+        <video id="video-renderer"></video>
+        <canvas id="canvas-renderer"></canvas>
+    </div>
+
+    <script type="module">
+        import { startFaceFilter } from "./js/mediapipe/mediapipe_controller.js";
+
+        // Escena exportada desde el editor de three.js. Por defecto app_fish.json (pez);
+        // para probar otra sin tocar el codigo: index_1.html?json=app_1.json
+        const scene = new URLSearchParams(location.search).get("json") || "app_fish.json";
+
+        const home = document.getElementById("home");
+        const button = document.getElementById("start-filter");
+        const note = document.getElementById("home-note");
+
+        let failed = false;
+
+        button.addEventListener("click", async () => {
+            // Tras un error, la cámara puede quedar abierta por el intento anterior:
+            // recargar la página es la forma segura de liberarla.
+            if (failed) { location.reload(); return; }
+
+            button.disabled = true;
+            button.textContent = "Cargando...";
+            note.classList.remove("error");
+            note.textContent = "Preparando la cámara y el filtro…";
+
+            try {
+                // showGui: false oculta el panel de depuración para el público.
+                await startFaceFilter(scene, { showGui: false });
+                home.classList.add("hidden");
+                setTimeout(() => home.remove(), 400);
+            } catch (error) {
+                console.error("Filtro facial:", error);
+                failed = true;
+                button.disabled = false;
+                button.textContent = "Reintentar";
+                note.classList.add("error");
+                const hint = {
+                    NotAllowedError: "Permiso de cámara denegado. Permítela en los ajustes del navegador y recarga.",
+                    NotFoundError: "No se encontró ninguna cámara en el dispositivo.",
+                    NotReadableError: "La cámara está en uso por otra app. Ciérrala y vuelve a intentar.",
+                    OverconstrainedError: "La cámara no soporta la resolución pedida.",
+                    SecurityError: "La página debe abrirse con HTTPS para usar la cámara.",
+                }[error?.name] || "No se pudo iniciar el filtro.";
+                note.textContent = `${hint} (${error?.name || "Error"}: ${error?.message || "sin detalle"})`;
+            }
+        });
+    </script>
+
+</body>
+
+</html>
